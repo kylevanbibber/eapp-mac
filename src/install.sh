@@ -34,10 +34,9 @@ CACHE="$HOME/Library/Caches/eApp-Mac-Setup"
 LOG="$HOME/Library/Logs/eApp-Mac-Setup.log"
 APPDIR="${EAPP_APPDIR:-/Applications/eApp.app}"
 
-ENGINE_URL="https://github.com/Sikarugir-App/Engines/releases/download/v1.0/WS12WineCX24.0.7_7.tar.xz"
-TEMPLATE_URL="https://github.com/Sikarugir-App/Template/releases/download/v1.0/Template-1.0.12.tar.xz"
-DOTNET40_URL="http://download.microsoft.com/download/9/5/A/95A9616B-7A37-4AF6-BC36-D6EA96C8DAAE/dotNetFx40_Full_x86_x64.exe"
-DOTNET48_URL="https://download.visualstudio.microsoft.com/download/pr/7afca223-55d2-470a-8edc-6a1739ae3252/abd170b4b0ec15ad0222a809b761a036/ndp48-x86-x64-allos-enu.exe"
+# Download locations are issued by the Tally server after sign-in (short-lived links).
+ENGINE_URL=""; TEMPLATE_URL=""; DOTNET40_URL=""; DOTNET48_URL=""
+GATE_VERSION="1.1"
 
 B="\033[1m"; G="\033[32m"; Y="\033[33m"; R="\033[31m"; N="\033[0m"
 mkdir -p "$CACHE" "$(dirname "$LOG")" "$EAPP_HOME"
@@ -85,26 +84,35 @@ wait_for() {
 # Written to disk so the eApp launcher can use the same code on every start.
 cat > "$EAPP_HOME/tally-gate.sh" <<'GATE_EOF'
 # Tally subscription gate for eApp for Mac. Sourced by the installer and by the eApp launcher.
-# Rule: the account's own subscription_status is active/trialing/past_due, OR the team it belongs
-# to is. Team status is only reported at sign-in, so team-covered accounts re-sign-in every 7 days.
-# Offline: allowed for 7 days after the last successful check, then blocked until online.
+# The decision is made by the Tally server (personal subscription OR active team). The server also
+# issues the offline allowance: eApp keeps opening until "expiresAt", then needs to be online once.
 TALLY_API="${TALLY_API:-https://api.callwithtally.com}"
 GATE_SERVICE="eApp Mac (Tally)"
-GATE_GRACE_SECS=$((7*24*3600))
-GATE_STATE="${GATE_STATE:-$EAPP_HOME/tally-gate.state}"   # non-secret: email|verified_epoch|via  (via=personal|team)
+GATE_STATE="${GATE_STATE:-$EAPP_HOME/tally-gate.state}"   # non-secret: email|expires_epoch|via
+GATE_VERSION="${GATE_VERSION:-1.1}"
 
 gate_dialog_text()   { osascript -e "text returned of (display dialog \"$1\" default answer \"$2\" with title \"eApp for Mac\" buttons {\"Cancel\",\"OK\"} default button \"OK\")" 2>/dev/null; }
 gate_dialog_secret() { osascript -e "text returned of (display dialog \"$1\" default answer \"\" with hidden answer with title \"eApp for Mac\" buttons {\"Cancel\",\"OK\"} default button \"OK\")" 2>/dev/null; }
 gate_tell()          { osascript -e "display dialog \"$1\" with title \"eApp for Mac\" buttons {\"OK\"} default button \"OK\"" >/dev/null 2>&1; }
 
 gate_json_str() { sed -nE "s/.*\"$1\" *: *\"([^\"]*)\".*/\1/p" | head -1; }
+gate_json_num() { sed -nE "s/.*\"$1\" *: *([0-9]+).*/\1/p" | head -1; }
 gate_json_esc() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
-gate_is_active() { case "$1" in active|trialing|past_due) return 0;; esac; return 1; }
 
 gate_token_get() { security find-generic-password -s "$GATE_SERVICE" -w 2>/dev/null; }
 gate_token_set() { security add-generic-password -U -s "$GATE_SERVICE" -a "$1" -w "$2" >/dev/null 2>&1; }
 gate_state_get() { cat "$GATE_STATE" 2>/dev/null; }
-gate_state_set() { printf '%s|%s|%s\n' "$1" "$(date +%s)" "$2" > "$GATE_STATE"; }
+gate_state_set() { printf '%s|%s|%s\n' "$1" "$2" "$3" > "$GATE_STATE"; }
+
+# Device identity: a hash of the machine's platform UUID. The UUID itself never leaves the Mac.
+gate_device_hash() { ioreg -rd1 -c IOPlatformExpertDevice 2>/dev/null | awk -F'"' '/IOPlatformUUID/{print $4}' | tr -d '\n' | shasum -a 256 | cut -c1-64; }
+gate_device_headers() {   # fills the array GATE_DEV_HDRS (bash arrays: no word-splitting surprises)
+  GATE_DEV_HDRS=( -H "X-EApp-Device: $(gate_device_hash)"
+                  -H "X-EApp-Name: $(scutil --get ComputerName 2>/dev/null | LC_ALL=C tr -cd 'A-Za-z0-9 ._-' | cut -c1-80)"
+                  -H "X-EApp-Model: $(sysctl -n hw.model 2>/dev/null)"
+                  -H "X-EApp-OS: $(sw_vers -productVersion 2>/dev/null)"
+                  -H "X-EApp-Version: $GATE_VERSION" )
+}
 
 # gate_http <curl args...>  -> sets GATE_CODE and GATE_BODY
 gate_http() {
@@ -113,56 +121,63 @@ gate_http() {
   [ -z "$GATE_CODE" ] && GATE_CODE=000
 }
 
-# gate_login <email> <password>  -> 0 active (sets GATE_VIA, stores token), 1 inactive, 2 bad credentials, 3 network
+# gate_entitle <token> -> 0 active (state + token stored), 1 inactive, 2 token rejected, 3 network
+gate_entitle() {
+  local token="$1"; gate_device_headers
+  gate_http "${GATE_DEV_HDRS[@]}" -H "Authorization: Bearer $token" "$TALLY_API/api/eapp-mac/entitlement"
+  case "$GATE_CODE" in
+    000) return 3;;
+    401) return 2;;
+    403) return 1;;
+    200) ;;
+    *)   return 3;;
+  esac
+  local email via exp
+  email=$(printf '%s' "$GATE_BODY" | gate_json_str email); via=$(printf '%s' "$GATE_BODY" | gate_json_str via)
+  exp=$(printf '%s' "$GATE_BODY" | gate_json_num expiresAt)
+  [ -n "$exp" ] || return 3
+  gate_token_set "${email:-tally}" "$token"; gate_state_set "${email:-tally}" "$exp" "${via:-personal}"; GATE_VIA="$via"; return 0
+}
+
+# gate_login <email> <password> -> 0 active, 1 inactive, 2 bad credentials, 3 network
 gate_login() {
   local body; body=$(printf '{"email":"%s","password":"%s"}' "$(gate_json_esc "$1")" "$(gate_json_esc "$2")")
   gate_http -H 'Content-Type: application/json' -d "$body" "$TALLY_API/api/login"
-  case "$GATE_CODE" in
-    000) return 3;;
-    200) ;;
-    *)   return 2;;
-  esac
-  local token; token=$(printf '%s' "$GATE_BODY" | gate_json_str token)
-  [ -n "$token" ] || return 2
-  local team_st; team_st=$(printf '%s' "$GATE_BODY" | gate_json_str subscriptionStatus)
-  gate_http -H "Authorization: Bearer $token" "$TALLY_API/api/account/profile"
-  local my_st; my_st=$(printf '%s' "$GATE_BODY" | gate_json_str subscription_status)
-  if gate_is_active "$my_st"; then GATE_VIA=personal
-  elif gate_is_active "$team_st"; then GATE_VIA=team
-  else return 1; fi
-  gate_token_set "$1" "$token"; gate_state_set "$1" "$GATE_VIA"; return 0
+  case "$GATE_CODE" in 000) return 3;; 200) ;; *) return 2;; esac
+  local token; token=$(printf '%s' "$GATE_BODY" | gate_json_str token); [ -n "$token" ] || return 2
+  gate_entitle "$token"; local rc=$?
+  [ $rc -eq 2 ] && return 3   # a token we were just given cannot be "rejected" unless the server is confused
+  return $rc
 }
 
-# gate_recheck -> 0 still active, 1 inactive, 2 must sign in again, 3 offline
+# gate_recheck -> 0 active, 1 inactive, 2 must sign in again, 3 offline
 gate_recheck() {
   local token; token=$(gate_token_get); [ -n "$token" ] || return 2
-  local st; st=$(gate_state_get); local email="${st%%|*}"; local via="${st##*|}"
   gate_http -X POST -H "Authorization: Bearer $token" "$TALLY_API/api/refresh-token"
   [ "$GATE_CODE" = "000" ] && return 3
   [ "$GATE_CODE" = "200" ] || return 2
   local new; new=$(printf '%s' "$GATE_BODY" | gate_json_str token); [ -n "$new" ] && token="$new"
-  gate_http -H "Authorization: Bearer $token" "$TALLY_API/api/account/profile"
-  [ "$GATE_CODE" = "000" ] && return 3
-  [ "$GATE_CODE" = "200" ] || return 2
-  local my_st; my_st=$(printf '%s' "$GATE_BODY" | gate_json_str subscription_status)
-  if gate_is_active "$my_st"; then gate_token_set "$email" "$token"; gate_state_set "$email" personal; return 0; fi
-  if [ "$via" = "team" ]; then
-    # Team status is only visible at sign-in. Trust the last sign-in for 7 days, then ask again.
-    local when; when=$(printf '%s' "$st" | cut -d'|' -f2)
-    [ $(( $(date +%s) - ${when:-0} )) -lt $GATE_GRACE_SECS ] && { gate_token_set "$email" "$token"; return 0; }
-    return 2
-  fi
-  return 1
+  gate_entitle "$token"
 }
 
+# Server-issued offline allowance.
 gate_within_grace() {
-  local st; st=$(gate_state_get); local when; when=$(printf '%s' "$st" | cut -d'|' -f2)
-  [ -n "$when" ] && [ $(( $(date +%s) - when )) -lt $GATE_GRACE_SECS ]
+  local exp; exp=$(gate_state_get | cut -d'|' -f2)
+  [ -n "$exp" ] && [ "$(date +%s)" -lt "$exp" ]
 }
 
-# gate_signin_interactive -> 0 active, 1 user cancelled or not active (already told)
+# gate_downloads -> exports DL_ENGINE DL_TEMPLATE DL_DOTNET40 DL_DOTNET48 (short-lived links); 0 ok, else fail
+gate_downloads() {
+  local token; token=$(gate_token_get); [ -n "$token" ] || return 1
+  gate_http -H "Authorization: Bearer $token" "$TALLY_API/api/eapp-mac/downloads"
+  [ "$GATE_CODE" = "200" ] || return 1
+  DL_ENGINE=$(printf '%s' "$GATE_BODY" | gate_json_str engine); DL_TEMPLATE=$(printf '%s' "$GATE_BODY" | gate_json_str template)
+  DL_DOTNET40=$(printf '%s' "$GATE_BODY" | gate_json_str dotnet40); DL_DOTNET48=$(printf '%s' "$GATE_BODY" | gate_json_str dotnet48)
+  [ -n "$DL_ENGINE" ] && [ -n "$DL_TEMPLATE" ] && [ -n "$DL_DOTNET40" ] && [ -n "$DL_DOTNET48" ]
+}
+
 gate_signin_interactive() {
-  local st; st=$(gate_state_get); local last="${st%%|*}"
+  local last; last=$(gate_state_get | cut -d'|' -f1)
   local email pass rc
   email=$(gate_dialog_text "Sign in with your Tally account to use eApp on this Mac.\n\nEmail:" "$last") || return 1
   [ -n "$email" ] || return 1
@@ -170,7 +185,7 @@ gate_signin_interactive() {
   gate_login "$email" "$pass"; rc=$?
   case $rc in
     0) return 0;;
-    1) gate_tell "This Tally account does not have an active subscription.\n\neApp for Mac is included with Tally. Subscribe or renew at callwithtally.com, then open eApp again."; return 1;;
+    1) gate_tell "This Tally account does not have an active subscription.\n\neApp for Mac is included with Tally. Subscribe or renew at callwithtally.com, then try again."; return 1;;
     2) gate_tell "That email or password is not right. Try again."; gate_signin_interactive; return $?;;
     *) gate_tell "Could not reach Tally. Check your internet connection and try again."; return 1;;
   esac
@@ -229,6 +244,9 @@ if gate_signin_interactive; then
 else
   die "eApp for Mac needs an active Tally subscription. Subscribe or renew at callwithtally.com, then run this again."
 fi
+gate_downloads || die "Tally did not provide the download links. Run this again in a few minutes."
+ENGINE_URL="$DL_ENGINE"; TEMPLATE_URL="$DL_TEMPLATE"; DOTNET40_URL="$DL_DOTNET40"; DOTNET48_URL="$DL_DOTNET48"
+ok "Download links issued"
 
 # --------------------------------------------------------------- 2. Engine
 step "Step 3 of 7  Installing the Windows engine"
@@ -276,6 +294,7 @@ step "Step 5 of 7  Installing Microsoft .NET Framework"
 if [ "$(mscoree_size)" -gt 400000 ] && [ "$(dotnet_release)" = "00080eb1" ]; then
   ok ".NET Framework 4.8 is already installed"
 else
+  gate_downloads && { DOTNET40_URL="$DL_DOTNET40"; DOTNET48_URL="$DL_DOTNET48"; }
   fetch "$DOTNET40_URL" "$CACHE/dotnetfx40.exe" "Microsoft .NET 4.0 (48 MB)"
   fetch "$DOTNET48_URL" "$CACHE/ndp48.exe"      "Microsoft .NET 4.8 (69 MB)"
   ok "Installers ready"

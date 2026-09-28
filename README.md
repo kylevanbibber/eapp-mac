@@ -32,7 +32,12 @@ The installer builds a private Windows environment using a free build of the ope
 that CrossOver publishes (LGPL, via the [Sikarugir](https://github.com/Sikarugir-App) project), installs
 Microsoft .NET Framework 4.0 and 4.8 into it from Microsoft's own download servers, verifies that a 32-bit
 .NET program can draw a window, then installs eApp from the MSI you downloaded from AIL. Nothing from AIL or
-Microsoft is redistributed here. The subscription check talks to the Tally API; the token lives in your keychain.
+Microsoft is redistributed here.
+
+The subscription check is done by the Tally server on every start (your own subscription or your team's).
+Download links for the engine are issued by Tally only to active accounts and expire after 15 minutes.
+The sign-in token lives in your keychain; your password is never stored. If this Mac is offline, eApp keeps
+opening until the allowance Tally issued last time runs out (7 days), then it needs to be online once.
 
 ## Building this installer
 
