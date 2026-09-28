@@ -43,4 +43,4 @@ Microsoft is redistributed here. The subscription check talks to the Tally API; 
 
 ## License
 
-Installer scripts: MIT. Wine is LGPL 2.1 and is downloaded at install time from its publishers.
+All rights reserved. The source is visible for review and support; it may not be copied, modified, or redistributed. Wine is LGPL 2.1 and is downloaded at install time from its publishers; nothing from AIL or Microsoft is redistributed here.
