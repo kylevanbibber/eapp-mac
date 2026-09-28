@@ -1,0 +1,101 @@
+==================================================
+  eApp for Mac
+  How to install it
+==================================================
+
+WHAT THIS IS
+------------
+This lets you run eApp on a Mac. eApp is a Windows
+program. This package builds a small private Windows
+environment on your Mac and installs eApp into it.
+
+You do not need Windows. You do not need Boot Camp.
+You do not need to buy anything.
+
+
+WHAT YOU NEED
+-------------
+1. A Mac with macOS 12 or newer.
+2. About 20 GB of free disk space.
+3. An internet connection.
+4. An active Tally subscription. The installer asks
+   you to sign in with your Tally email and password.
+   eApp for Mac is included with Tally.
+5. The eApp installer file from AIL, named
+   eAppSetup.msi. Download it the same way you would
+   on a Windows computer. Leave it in your Downloads
+   folder.
+
+
+HOW TO INSTALL
+--------------
+STEP 1
+  Download eAppSetup.msi from AIL.
+  Leave it in your Downloads folder.
+
+STEP 2
+  RIGHT-CLICK the file named "Install eApp.command"
+  and choose Open.
+
+  Do not double-click it. macOS blocks files that
+  come from the internet when you double-click them.
+  Right-click and Open gets past that.
+
+  A window will ask if you are sure. Click Open.
+
+STEP 3
+  A black text window opens. First it asks you to
+  sign in to Tally. Then it does the rest by itself.
+  It takes 20 to 40 minutes.
+
+  Most of that time it will say "Installing..." with
+  a timer. That is normal. Nothing is frozen. Leave
+  it alone until it says FINISHED.
+
+STEP 4
+  Open eApp from your Applications folder, the same
+  as any other Mac app.
+
+
+THE FIRST TIME YOU OPEN eApp
+----------------------------
+eApp checks your Tally subscription each time it
+opens. If this Mac is offline, that is fine for up
+to 7 days.
+
+Then sign in with your normal eApp username and
+password.
+
+eApp will show an update screen and download a
+3 GB update. That takes 10 to 20 minutes. Then it
+closes and reopens itself. That is normal. Leave it
+alone until it reopens.
+
+
+IF SOMETHING GOES WRONG
+-----------------------
+There is a log file here:
+
+  Home folder > Library > Logs > eApp-Mac-Setup.log
+
+Send that file to your administrator.
+
+You can run "Install eApp.command" again at any
+time. It skips the steps that are already done.
+
+
+WHAT TO REPORT BACK
+-------------------
+Please say whether each of these worked:
+
+  [ ] The installer finished without an error
+  [ ] eApp opened
+  [ ] You signed in
+  [ ] eApp updated itself and reopened
+  [ ] You opened a new application
+  [ ] You completed the health questions
+  [ ] You captured a signature
+  [ ] You submitted the application
+  [ ] You printed or saved a PDF
+
+If any step failed, say what the screen said.
