@@ -38,6 +38,7 @@ ENGINE_URL="https://github.com/Sikarugir-App/Engines/releases/download/v1.0/WS12
 TEMPLATE_URL="https://github.com/Sikarugir-App/Template/releases/download/v1.0/Template-1.0.12.tar.xz"
 DOTNET40_URL="http://download.microsoft.com/download/9/5/A/95A9616B-7A37-4AF6-BC36-D6EA96C8DAAE/dotNetFx40_Full_x86_x64.exe"
 DOTNET48_URL="https://download.visualstudio.microsoft.com/download/pr/7afca223-55d2-470a-8edc-6a1739ae3252/abd170b4b0ec15ad0222a809b761a036/ndp48-x86-x64-allos-enu.exe"
+WIC_URL="https://web.archive.org/web/20200810071051if_/https://download.microsoft.com/download/f/f/1/ff178bb1-da91-48ed-89e5-478a99387d4f/wic_x86_enu.exe"
 
 B="\033[1m"; G="\033[32m"; Y="\033[33m"; R="\033[31m"; N="\033[0m"
 mkdir -p "$CACHE" "$(dirname "$LOG")" "$EAPP_HOME"
@@ -95,7 +96,7 @@ Do not close this window until it says FINISHED.
 BANNER
 
 # ------------------------------------------------------------------ 1. Mac
-step "Step 1 of 6  Checking this Mac"
+step "Step 1 of 7  Checking this Mac"
 MACOS=$(sw_vers -productVersion)
 case "$MACOS" in 1[2-9].*|2[0-9].*) ok "macOS $MACOS" ;; *) die "eApp needs macOS 12 or newer. This Mac has macOS $MACOS." ;; esac
 if [ "$(uname -m)" = "arm64" ]; then
@@ -113,7 +114,7 @@ ok "${FREE} GB free disk space"
 
 
 # --------------------------------------------------------------- 2. Engine
-step "Step 2 of 6  Installing the Windows engine"
+step "Step 2 of 7  Installing the Windows engine"
 if [ -x "$WINE" ] && [ -e "$ENGINE_DIR/libfreetype.6.dylib" ] && [ -e "$ENGINE_DIR/libgstreamer-1.0.0.dylib" ]; then
   ok "Engine already installed"
 else
@@ -137,7 +138,7 @@ else
 fi
 
 # --------------------------------------------------------------- 3. Prefix
-step "Step 3 of 6  Preparing the Windows environment"
+step "Step 3 of 7  Preparing the Windows environment"
 if [ -d "$C/windows" ]; then ok "Environment already exists"
 else
   say "    Creating it. This takes a minute."
@@ -154,7 +155,7 @@ ok "Environment runs 64-bit and 32-bit Windows code"
 stop_engine
 
 # ----------------------------------------------------------------- 4. .NET
-step "Step 4 of 6  Installing Microsoft .NET Framework"
+step "Step 4 of 7  Installing Microsoft .NET Framework"
 if [ "$(mscoree_size)" -gt 400000 ] && [ "$(dotnet_release)" = "00080eb1" ]; then
   ok ".NET Framework 4.8 is already installed"
 else
@@ -190,8 +191,36 @@ else
   ok ".NET Framework 4.8 installed ($(dotnet_size) MB)"
 fi
 
+# ------------------------------------------------------- 5. Image support
+step "Step 5 of 7  Installing image support"
+# eApp form pages are TIFF files. About one in ten uses Deflate compression, which the engine's own
+# decoder cannot read; opening such a form shows "A generic error occurred in GDI+". Microsoft's Windows
+# Imaging Component (a free redistributable) reads all of them. eApp is 32-bit, so it goes in syswow64.
+WIC_OK=0
+if [ "$(stat -f%z "$C/windows/syswow64/windowscodecs.dll" 2>/dev/null || echo 0)" = "716288" ] \
+   && grep -aq '"windowscodecs"="native,builtin"' "$WINEPREFIX/user.reg" 2>/dev/null; then WIC_OK=1; fi
+if [ "$WIC_OK" = 1 ]; then ok "Image support already installed"
+else
+  fetch "$WIC_URL" "$CACHE/wic_x86_enu.exe" "image support (1.2 MB)"
+  ok "Installer ready"
+  stop_engine
+  cp -f "$CACHE/wic_x86_enu.exe" "$C/wic_x86_enu.exe"; rm -rf "$C/wic"; mkdir -p "$C/wic"
+  say "    Unpacking."
+  "$WINE" 'C:\wic_x86_enu.exe' /q '/x:C:\wic' >> "$LOG" 2>&1 &
+  for i in $(seq 1 24); do sleep 5; [ -f "$C/wic/windowscodecs.dll" ] && [ -f "$C/wic/wmphoto.dll" ] && break; done
+  stop_engine
+  [ "$(stat -f%z "$C/wic/windowscodecs.dll" 2>/dev/null || echo 0)" = "716288" ] || die "Image support did not unpack. Send the log file to your administrator."
+  for f in windowscodecs.dll windowscodecsext.dll wmphoto.dll photometadatahandler.dll; do cp -f "$C/wic/$f" "$C/windows/syswow64/$f"; done
+  run "$WINE" reg.exe add 'HKCU\Software\Wine\DllOverrides' /v windowscodecs    /d 'native,builtin' /f
+  run "$WINE" reg.exe add 'HKCU\Software\Wine\DllOverrides' /v windowscodecsext /d 'native,builtin' /f
+  stop_engine
+  rm -rf "$C/wic" "$C/wic_x86_enu.exe"
+  [ "$(stat -f%z "$C/windows/syswow64/windowscodecs.dll" 2>/dev/null || echo 0)" = "716288" ] || die "Image support did not install. Send the log file to your administrator."
+  ok "Image support installed"
+fi
+
 # ------------------------------------------------------------- 5. Self-test
-step "Step 5 of 6  Testing that Windows programs like eApp can run"
+step "Step 6 of 7  Testing that Windows programs like eApp can run"
 cat > "$C/SelfTest.cs" <<'CS'
 using System; using System.IO; using System.Windows.Forms;
 class T { [STAThread] static void Main() {
@@ -211,7 +240,7 @@ stop_engine; rm -f "$C/SelfTest.cs" "$C/SelfTest.exe" "$C/selftest.txt"
 ok "A 32-bit Windows program started, drew a window, and exited"
 
 # ----------------------------------------------------------------- 6. eApp
-step "Step 6 of 6  Installing eApp"
+step "Step 7 of 7  Installing eApp"
 if [ -f "$C/Program Files (x86)/AIL/eApp/eAPP.exe" ]; then ok "eApp is already installed"
 else
   MSI=""

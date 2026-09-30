@@ -36,7 +36,7 @@ APPDIR="${EAPP_APPDIR:-/Applications/eApp.app}"
 
 # Download locations are issued by the Tally server after sign-in (short-lived links).
 ENGINE_URL=""; TEMPLATE_URL=""; DOTNET40_URL=""; DOTNET48_URL=""
-GATE_VERSION="1.2"
+GATE_VERSION="1.3"
 
 B="\033[1m"; G="\033[32m"; Y="\033[33m"; R="\033[31m"; N="\033[0m"
 mkdir -p "$CACHE" "$(dirname "$LOG")" "$EAPP_HOME"
@@ -89,7 +89,7 @@ cat > "$EAPP_HOME/tally-gate.sh" <<'GATE_EOF'
 TALLY_API="${TALLY_API:-https://api.callwithtally.com}"
 GATE_SERVICE="eApp Mac (Tally)"
 GATE_STATE="${GATE_STATE:-$EAPP_HOME/tally-gate.state}"   # non-secret: email|expires_epoch|via
-GATE_VERSION="${GATE_VERSION:-1.2}"
+GATE_VERSION="${GATE_VERSION:-1.3}"
 
 gate_dialog_text()   { osascript -e 'on run argv' -e 'tell application "System Events"' -e 'activate' -e 'set r to display dialog (item 1 of argv) default answer (item 2 of argv) with title "eApp for Mac" buttons {"Cancel", "OK"} default button "OK"' -e 'return text returned of r' -e 'end tell' -e 'end run' "$1" "$2" 2>/dev/null; }
 gate_dialog_secret() { osascript -e 'on run argv' -e 'tell application "System Events"' -e 'activate' -e 'set r to display dialog (item 1 of argv) default answer "" with hidden answer with title "eApp for Mac" buttons {"Cancel", "OK"} default button "OK"' -e 'return text returned of r' -e 'end tell' -e 'end run' "$1" 2>/dev/null; }
@@ -173,7 +173,8 @@ gate_downloads() {
   [ "$GATE_CODE" = "200" ] || return 1
   DL_ENGINE=$(printf '%s' "$GATE_BODY" | gate_json_str engine); DL_TEMPLATE=$(printf '%s' "$GATE_BODY" | gate_json_str template)
   DL_DOTNET40=$(printf '%s' "$GATE_BODY" | gate_json_str dotnet40); DL_DOTNET48=$(printf '%s' "$GATE_BODY" | gate_json_str dotnet48)
-  [ -n "$DL_ENGINE" ] && [ -n "$DL_TEMPLATE" ] && [ -n "$DL_DOTNET40" ] && [ -n "$DL_DOTNET48" ]
+  DL_WIC=$(printf '%s' "$GATE_BODY" | gate_json_str wic)
+  [ -n "$DL_ENGINE" ] && [ -n "$DL_TEMPLATE" ] && [ -n "$DL_DOTNET40" ] && [ -n "$DL_DOTNET48" ] && [ -n "$DL_WIC" ]
 }
 
 gate_signin_interactive() {
@@ -224,7 +225,7 @@ Do not close this window until it says FINISHED.
 BANNER
 
 # ------------------------------------------------------------------ 1. Mac
-step "Step 1 of 7  Checking this Mac"
+step "Step 1 of 8  Checking this Mac"
 MACOS=$(sw_vers -productVersion)
 case "$MACOS" in 1[2-9].*|2[0-9].*) ok "macOS $MACOS" ;; *) die "eApp needs macOS 12 or newer. This Mac has macOS $MACOS." ;; esac
 if [ "$(uname -m)" = "arm64" ]; then
@@ -242,7 +243,7 @@ ok "${FREE} GB free disk space"
 
 
 # ---------------------------------------------------------------- 2. Tally
-step "Step 2 of 7  Signing in to Tally"
+step "Step 2 of 8  Signing in to Tally"
 say "    eApp for Mac is included with an active Tally subscription."
 say "    A sign-in window will open."
 if gate_signin_interactive; then
@@ -255,7 +256,7 @@ ENGINE_URL="$DL_ENGINE"; TEMPLATE_URL="$DL_TEMPLATE"; DOTNET40_URL="$DL_DOTNET40
 ok "Download links issued"
 
 # --------------------------------------------------------------- 2. Engine
-step "Step 3 of 7  Installing the Windows engine"
+step "Step 3 of 8  Installing the Windows engine"
 if [ -x "$WINE" ] && [ -e "$ENGINE_DIR/libfreetype.6.dylib" ] && [ -e "$ENGINE_DIR/libgstreamer-1.0.0.dylib" ]; then
   ok "Engine already installed"
 else
@@ -279,7 +280,7 @@ else
 fi
 
 # --------------------------------------------------------------- 3. Prefix
-step "Step 4 of 7  Preparing the Windows environment"
+step "Step 4 of 8  Preparing the Windows environment"
 if [ -d "$C/windows" ]; then ok "Environment already exists"
 else
   say "    Creating it. This takes a minute."
@@ -296,7 +297,7 @@ ok "Environment runs 64-bit and 32-bit Windows code"
 stop_engine
 
 # ----------------------------------------------------------------- 4. .NET
-step "Step 5 of 7  Installing Microsoft .NET Framework"
+step "Step 5 of 8  Installing Microsoft .NET Framework"
 if [ "$(mscoree_size)" -gt 400000 ] && [ "$(dotnet_release)" = "00080eb1" ]; then
   ok ".NET Framework 4.8 is already installed"
 else
@@ -333,8 +334,37 @@ else
   ok ".NET Framework 4.8 installed ($(dotnet_size) MB)"
 fi
 
+# ------------------------------------------------------- 6. Image support
+step "Step 6 of 8  Installing image support"
+# eApp form pages are TIFF files. About one in ten uses Deflate compression, which the engine's own
+# decoder cannot read; opening such a form shows "A generic error occurred in GDI+". Microsoft's Windows
+# Imaging Component (a free redistributable) reads all of them. eApp is 32-bit, so it goes in syswow64.
+WIC_OK=0
+if [ "$(stat -f%z "$C/windows/syswow64/windowscodecs.dll" 2>/dev/null || echo 0)" = "716288" ] \
+   && grep -aq '"windowscodecs"="native,builtin"' "$WINEPREFIX/user.reg" 2>/dev/null; then WIC_OK=1; fi
+if [ "$WIC_OK" = 1 ]; then ok "Image support already installed"
+else
+  gate_downloads || die "Tally did not provide the download link. Run this again in a few minutes."
+  fetch "$DL_WIC" "$CACHE/wic_x86_enu.exe" "image support (1.2 MB)"
+  ok "Installer ready"
+  stop_engine
+  cp -f "$CACHE/wic_x86_enu.exe" "$C/wic_x86_enu.exe"; rm -rf "$C/wic"; mkdir -p "$C/wic"
+  say "    Unpacking."
+  "$WINE" 'C:\wic_x86_enu.exe' /q '/x:C:\wic' >> "$LOG" 2>&1 &
+  for i in $(seq 1 24); do sleep 5; [ -f "$C/wic/windowscodecs.dll" ] && [ -f "$C/wic/wmphoto.dll" ] && break; done
+  stop_engine
+  [ "$(stat -f%z "$C/wic/windowscodecs.dll" 2>/dev/null || echo 0)" = "716288" ] || die "Image support did not unpack. Send the log file to your administrator."
+  for f in windowscodecs.dll windowscodecsext.dll wmphoto.dll photometadatahandler.dll; do cp -f "$C/wic/$f" "$C/windows/syswow64/$f"; done
+  run "$WINE" reg.exe add 'HKCU\Software\Wine\DllOverrides' /v windowscodecs    /d 'native,builtin' /f
+  run "$WINE" reg.exe add 'HKCU\Software\Wine\DllOverrides' /v windowscodecsext /d 'native,builtin' /f
+  stop_engine
+  rm -rf "$C/wic" "$C/wic_x86_enu.exe"
+  [ "$(stat -f%z "$C/windows/syswow64/windowscodecs.dll" 2>/dev/null || echo 0)" = "716288" ] || die "Image support did not install. Send the log file to your administrator."
+  ok "Image support installed"
+fi
+
 # ------------------------------------------------------------- 5. Self-test
-step "Step 6 of 7  Testing that Windows programs like eApp can run"
+step "Step 7 of 8  Testing that Windows programs like eApp can run"
 cat > "$C/SelfTest.cs" <<'CS'
 using System; using System.IO; using System.Windows.Forms;
 class T { [STAThread] static void Main() {
@@ -354,7 +384,7 @@ stop_engine; rm -f "$C/SelfTest.cs" "$C/SelfTest.exe" "$C/selftest.txt"
 ok "A 32-bit Windows program started, drew a window, and exited"
 
 # ----------------------------------------------------------------- 6. eApp
-step "Step 7 of 7  Installing eApp"
+step "Step 8 of 8  Installing eApp"
 if [ -f "$C/Program Files (x86)/AIL/eApp/eAPP.exe" ]; then ok "eApp is already installed"
 else
   MSI=""

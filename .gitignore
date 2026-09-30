@@ -2,3 +2,10 @@ dist/
 *.zip
 .DS_Store
 open/dist/
+codec-test/*.png
+codec-test/*.jpg
+codec-test/*.gif
+codec-test/*.bmp
+codec-test/*.tif
+codec-test/matrix-*.txt
+codec-test/msi/
