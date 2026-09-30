@@ -7,23 +7,24 @@ set -euo pipefail
 cd "$(dirname "$0")"
 PROFILE="${NOTARY_PROFILE:-eapp-mac-notary}"
 ID="Developer ID Application: Kyle VanBibber (B8MFVFT62V)"
-APP="dist/Install eApp.app"
+SRC="${SRC:-src}"; DIST="${DIST:-dist}"; APPNAME="${APPNAME:-Install eApp}"
+APP="$DIST/$APPNAME.app"
 [ -d "$APP" ] || { echo "run ./build.sh first"; exit 1; }
 echo "== 1/4 notarize the app"
-ditto -c -k --keepParent "$APP" dist/app.zip
-xcrun notarytool submit dist/app.zip --keychain-profile "$PROFILE" --wait
+ditto -c -k --keepParent "$APP" "$DIST/app.zip"
+xcrun notarytool submit "$DIST/app.zip" --keychain-profile "$PROFILE" --wait
 xcrun stapler staple "$APP"
-rm -f dist/app.zip
+rm -f "$DIST/app.zip"
 echo "== 2/4 rebuild the DMG around the stapled app"
-STAGE=dist/stage; rm -rf "$STAGE"; mkdir -p "$STAGE"; cp -R "$APP" "$STAGE/"; cp "src/READ ME FIRST.txt" "$STAGE/Read Me First.txt"
-hdiutil create -quiet -volname "Install eApp" -srcfolder "$STAGE" -ov -format UDZO dist/Install-eApp.dmg
-codesign --force --timestamp --sign "$ID" dist/Install-eApp.dmg
+STAGE="$DIST/stage"; rm -rf "$STAGE"; mkdir -p "$STAGE"; cp -R "$APP" "$STAGE/"; cp "$SRC/READ ME FIRST.txt" "$STAGE/Read Me First.txt"
+hdiutil create -quiet -volname "$APPNAME" -srcfolder "$STAGE" -ov -format UDZO "$DIST/Install-eApp.dmg"
+codesign --force --timestamp --sign "$ID" "$DIST/Install-eApp.dmg"
 rm -rf "$STAGE"
 echo "== 3/4 notarize the DMG"
-xcrun notarytool submit dist/Install-eApp.dmg --keychain-profile "$PROFILE" --wait
-xcrun stapler staple dist/Install-eApp.dmg
+xcrun notarytool submit "$DIST/Install-eApp.dmg" --keychain-profile "$PROFILE" --wait
+xcrun stapler staple "$DIST/Install-eApp.dmg"
 echo "== 4/4 verify like a fresh Mac would"
-xcrun stapler validate dist/Install-eApp.dmg
-spctl --assess --type open --context context:primary-signature --verbose=2 dist/Install-eApp.dmg
+xcrun stapler validate "$DIST/Install-eApp.dmg"
+spctl --assess --type open --context context:primary-signature --verbose=2 "$DIST/Install-eApp.dmg"
 spctl --assess --type execute --verbose=2 "$APP"
-echo "READY: dist/Install-eApp.dmg"
+echo "READY: $DIST/Install-eApp.dmg"

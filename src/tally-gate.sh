@@ -4,11 +4,11 @@
 TALLY_API="${TALLY_API:-https://api.callwithtally.com}"
 GATE_SERVICE="eApp Mac (Tally)"
 GATE_STATE="${GATE_STATE:-$EAPP_HOME/tally-gate.state}"   # non-secret: email|expires_epoch|via
-GATE_VERSION="${GATE_VERSION:-1.1}"
+GATE_VERSION="${GATE_VERSION:-1.2}"
 
-gate_dialog_text()   { osascript -e "text returned of (display dialog \"$1\" default answer \"$2\" with title \"eApp for Mac\" buttons {\"Cancel\",\"OK\"} default button \"OK\")" 2>/dev/null; }
-gate_dialog_secret() { osascript -e "text returned of (display dialog \"$1\" default answer \"\" with hidden answer with title \"eApp for Mac\" buttons {\"Cancel\",\"OK\"} default button \"OK\")" 2>/dev/null; }
-gate_tell()          { osascript -e "display dialog \"$1\" with title \"eApp for Mac\" buttons {\"OK\"} default button \"OK\"" >/dev/null 2>&1; }
+gate_dialog_text()   { osascript -e 'on run argv' -e 'tell application "System Events"' -e 'activate' -e 'set r to display dialog (item 1 of argv) default answer (item 2 of argv) with title "eApp for Mac" buttons {"Cancel", "OK"} default button "OK"' -e 'return text returned of r' -e 'end tell' -e 'end run' "$1" "$2" 2>/dev/null; }
+gate_dialog_secret() { osascript -e 'on run argv' -e 'tell application "System Events"' -e 'activate' -e 'set r to display dialog (item 1 of argv) default answer "" with hidden answer with title "eApp for Mac" buttons {"Cancel", "OK"} default button "OK"' -e 'return text returned of r' -e 'end tell' -e 'end run' "$1" 2>/dev/null; }
+gate_tell()          { osascript -e 'on run argv' -e 'tell application "System Events"' -e 'activate' -e 'display dialog (item 1 of argv) with title "eApp for Mac" buttons {"OK"} default button "OK"' -e 'end tell' -e 'end run' "$1" >/dev/null 2>&1; }
 
 gate_json_str() { sed -nE "s/.*\"$1\" *: *\"([^\"]*)\".*/\1/p" | head -1; }
 gate_json_num() { sed -nE "s/.*\"$1\" *: *([0-9]+).*/\1/p" | head -1; }
@@ -94,13 +94,17 @@ gate_downloads() {
 gate_signin_interactive() {
   local last; last=$(gate_state_get | cut -d'|' -f1)
   local email pass rc
-  email=$(gate_dialog_text "Sign in with your Tally account to use eApp on this Mac.\n\nEmail:" "$last") || return 1
+  email=$(gate_dialog_text "Sign in with your Tally account to use eApp on this Mac.
+
+Email:" "$last") || return 1
   [ -n "$email" ] || return 1
   pass=$(gate_dialog_secret "Tally password for $email:") || return 1
   gate_login "$email" "$pass"; rc=$?
   case $rc in
     0) return 0;;
-    1) gate_tell "This Tally account does not have an active subscription.\n\neApp for Mac is included with Tally. Subscribe or renew at callwithtally.com, then try again."; return 1;;
+    1) gate_tell "This Tally account does not have an active subscription.
+
+eApp for Mac is included with Tally. Subscribe or renew at callwithtally.com, then try again."; return 1;;
     2) gate_tell "That email or password is not right. Try again."; gate_signin_interactive; return $?;;
     *) gate_tell "Could not reach Tally. Check your internet connection and try again."; return 1;;
   esac
@@ -111,7 +115,9 @@ gate_check_or_signin() {
   gate_recheck; local rc=$?
   case $rc in
     0) return 0;;
-    1) gate_tell "Your Tally subscription is no longer active.\n\neApp for Mac is included with Tally. Renew at callwithtally.com, then open eApp again."; return 1;;
+    1) gate_tell "Your Tally subscription is no longer active.
+
+eApp for Mac is included with Tally. Renew at callwithtally.com, then open eApp again."; return 1;;
     3) gate_within_grace && return 0
        gate_tell "eApp needs to confirm your Tally subscription, and this Mac is offline. Connect to the internet and open eApp again."; return 1;;
     *) gate_signin_interactive; return $?;;
