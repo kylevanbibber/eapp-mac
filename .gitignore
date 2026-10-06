@@ -9,3 +9,5 @@ codec-test/*.bmp
 codec-test/*.tif
 codec-test/matrix-*.txt
 codec-test/msi/
+codec-test/*.pgm
+codec-test/*.png
