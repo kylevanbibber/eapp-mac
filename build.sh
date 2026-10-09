@@ -12,6 +12,8 @@ bash -n "$SRC/install.sh"
 osacompile -o "$APP" "$SRC/installer.applescript"
 cp "$SRC/install.sh" "$APP/Contents/Resources/install.sh"; chmod 755 "$APP/Contents/Resources/install.sh"
 cp "$SRC/READ ME FIRST.txt" "$APP/Contents/Resources/"
+[ -f bin/wmp.dll ] || { echo "bin/wmp.dll is missing (see patches/README.md)"; exit 1; }
+cp bin/wmp.dll "$APP/Contents/Resources/wmp.dll"
 PL="$APP/Contents/Info.plist"
 pb(){ /usr/libexec/PlistBuddy -c "$1" "$PL" >/dev/null 2>&1 || true; }
 pb "Add :CFBundleIdentifier string $BUNDLE_ID"; pb "Set :CFBundleIdentifier $BUNDLE_ID"

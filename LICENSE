@@ -11,3 +11,12 @@ run time (Wine, Microsoft .NET Framework, AIL eApp) remain under their own
 licenses and are not redistributed here.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+
+Third-party component shipped inside the installer
+--------------------------------------------------
+bin/wmp.dll is a rebuilt Windows Media Player control from Wine 9.0
+(dlls/wmp) with the patch in patches/wine-9.0-wmp-pause.patch applied.
+Wine is Copyright (c) the Wine project authors and is licensed under the
+GNU Lesser General Public License version 2.1 or later. That license, not
+the terms above, applies to wmp.dll. Source: https://dl.winehq.org/wine/source/9.0/
+plus the patch in patches/. Build steps: patches/README.md.

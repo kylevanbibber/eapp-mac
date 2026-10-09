@@ -18,6 +18,8 @@
 #   - This engine copies itself to a temp path at launch, so installer
 #     processes never show their own names. Completion is detected by what
 #     lands on disk and in the registry, never by process names.
+#   - The engine's Windows Media Player control cannot pause or report a finished seek, so
+#     WPF video (eApp's recruiting video) never plays. A rebuilt control replaces it.
 
 set -u
 umask 022
@@ -38,6 +40,7 @@ ENGINE_URL="https://github.com/Sikarugir-App/Engines/releases/download/v1.0/WS12
 TEMPLATE_URL="https://github.com/Sikarugir-App/Template/releases/download/v1.0/Template-1.0.12.tar.xz"
 DOTNET40_URL="http://download.microsoft.com/download/9/5/A/95A9616B-7A37-4AF6-BC36-D6EA96C8DAAE/dotNetFx40_Full_x86_x64.exe"
 DOTNET48_URL="https://download.visualstudio.microsoft.com/download/pr/7afca223-55d2-470a-8edc-6a1739ae3252/abd170b4b0ec15ad0222a809b761a036/ndp48-x86-x64-allos-enu.exe"
+WMP_URL="https://github.com/kylevanbibber/eapp-mac/releases/download/v1.4-open/wmp.dll"
 
 B="\033[1m"; G="\033[32m"; Y="\033[33m"; R="\033[31m"; N="\033[0m"
 mkdir -p "$CACHE" "$(dirname "$LOG")" "$EAPP_HOME"
@@ -95,7 +98,7 @@ Do not close this window until it says FINISHED.
 BANNER
 
 # ------------------------------------------------------------------ 1. Mac
-step "Step 1 of 7  Checking this Mac"
+step "Step 1 of 8  Checking this Mac"
 MACOS=$(sw_vers -productVersion)
 case "$MACOS" in 1[2-9].*|2[0-9].*) ok "macOS $MACOS" ;; *) die "eApp needs macOS 12 or newer. This Mac has macOS $MACOS." ;; esac
 if [ "$(uname -m)" = "arm64" ]; then
@@ -116,7 +119,7 @@ ok "${FREE} GB free disk space"
 
 
 # --------------------------------------------------------------- 2. Engine
-step "Step 2 of 7  Installing the Windows engine"
+step "Step 2 of 8  Installing the Windows engine"
 if [ -x "$WINE" ] && [ -e "$ENGINE_DIR/libfreetype.6.dylib" ] && [ -e "$ENGINE_DIR/libgstreamer-1.0.0.dylib" ]; then
   ok "Engine already installed"
 else
@@ -139,8 +142,43 @@ else
   ok "Engine ready: $("$WINE" --version 2>/dev/null | head -1)"
 fi
 
+
+# --------------------------------------------------------- 2b. Media player
+step "Step 3 of 8  Fixing video playback"
+# eApp plays its recruiting and product videos through a WPF MediaElement, which drives the
+# Windows Media Player control. The engine's own copy of that control cannot pause and never
+# reports that a seek finished, so WPF gives up after opening the file: the video never starts
+# and eApp keeps its Continue button hidden. A rebuilt copy of the control (Wine 9.0 source plus
+# a small patch, see patches/ in the installer repository) replaces it. The original is kept
+# beside it as wmp.dll.orig. Fresh engine unpack or not, this is safe to repeat.
+WMP_DIR="$CXE/lib/wine/i386-windows"
+WMP_SHA="ab559016215352c7786af70c39995bb6baa4839722113675bfe287e41cd4c776"
+RES="$(cd "$(dirname "$0")" && pwd)"
+wmp_sha() { shasum -a 256 "$1" 2>/dev/null | cut -c1-64; }
+if [ "$(wmp_sha "$WMP_DIR/wmp.dll")" = "$WMP_SHA" ]; then ok "Media player already fixed"
+else
+  [ "$(wmp_sha "$CACHE/wmp.dll")" = "$WMP_SHA" ] || rm -f "$CACHE/wmp.dll"
+  if [ ! -s "$CACHE/wmp.dll" ]; then
+    if [ "$(wmp_sha "$RES/wmp.dll")" = "$WMP_SHA" ]; then cp -f "$RES/wmp.dll" "$CACHE/wmp.dll"
+    else fetch "$WMP_URL" "$CACHE/wmp.dll" "the media player fix (176 KB)"; fi
+  fi
+  [ "$(wmp_sha "$CACHE/wmp.dll")" = "$WMP_SHA" ] || { rm -f "$CACHE/wmp.dll"; die "The media player fix did not download correctly. Run this again."; }
+  stop_engine
+  [ -f "$WMP_DIR/wmp.dll.orig" ] || cp -p "$WMP_DIR/wmp.dll" "$WMP_DIR/wmp.dll.orig"
+  cp -f "$CACHE/wmp.dll" "$WMP_DIR/wmp.dll" && chmod 644 "$WMP_DIR/wmp.dll" || die "Could not install the media player fix."
+  ok "Media player fixed"
+fi
+# Video decoding uses GStreamer. Its plugin index is built once here (about 10 s) and reused by
+# the eApp icon. Without it the engine rebuilds the index every time a video opens (about 100 s).
+GST="$ENGINE_DIR/GStreamer.framework/Versions/1.0"
+if [ -x "$GST/bin/gst-inspect-1.0" ]; then
+  GST_REGISTRY="$EAPP_HOME/gst-registry.bin" GST_PLUGIN_SYSTEM_PATH="$GST/lib/gstreamer-1.0" DYLD_FALLBACK_LIBRARY_PATH="$ENGINE_DIR:$GST/lib" "$GST/bin/gst-inspect-1.0" >/dev/null 2>>"$LOG"
+  if [ -s "$EAPP_HOME/gst-registry.bin" ]; then ok "Video decoder index built"
+  else warn "Video decoder index was not built. The first video will take longer to open."; fi
+fi
+
 # --------------------------------------------------------------- 3. Prefix
-step "Step 3 of 7  Preparing the Windows environment"
+step "Step 4 of 8  Preparing the Windows environment"
 if [ -d "$C/windows" ]; then ok "Environment already exists"
 else
   say "    Creating it. This takes a minute."
@@ -157,7 +195,7 @@ ok "Environment runs 64-bit and 32-bit Windows code"
 stop_engine
 
 # ----------------------------------------------------------------- 4. .NET
-step "Step 4 of 7  Installing Microsoft .NET Framework"
+step "Step 5 of 8  Installing Microsoft .NET Framework"
 if [ "$(mscoree_size)" -gt 400000 ] && [ "$(dotnet_release)" = "00080eb1" ]; then
   ok ".NET Framework 4.8 is already installed"
 else
@@ -194,7 +232,7 @@ else
 fi
 
 # ---------------------------------------------------- 5. Form page repair
-step "Step 5 of 7  Repairing form pages"
+step "Step 6 of 8  Repairing form pages"
 # About one in ten eApp form pages is a Deflate-compressed TIFF, which the engine's image codec
 # cannot read; opening such a form fails with "A generic error occurred in GDI+". A small tool
 # rewrites those pages as PackBits TIFF (pixel-identical) and keeps the originals in
@@ -336,7 +374,7 @@ fi
 stop_engine
 
 # ------------------------------------------------------------- 5. Self-test
-step "Step 6 of 7  Testing that Windows programs like eApp can run"
+step "Step 7 of 8  Testing that Windows programs like eApp can run"
 cat > "$C/SelfTest.cs" <<'CS'
 using System; using System.IO; using System.Windows.Forms;
 class T { [STAThread] static void Main() {
@@ -356,7 +394,7 @@ stop_engine; rm -f "$C/SelfTest.cs" "$C/SelfTest.exe" "$C/selftest.txt"
 ok "A 32-bit Windows program started, drew a window, and exited"
 
 # ----------------------------------------------------------------- 6. eApp
-step "Step 7 of 7  Installing eApp"
+step "Step 8 of 8  Installing eApp"
 if [ -f "$C/Program Files (x86)/AIL/eApp/eAPP.exe" ]; then ok "eApp is already installed"
 else
   MSI=""
@@ -404,6 +442,9 @@ EAPP_HOME="$EAPP_HOME"
 export WINEPREFIX="\$EAPP_HOME/prefix"
 export WINEDEBUG=-all
 export DYLD_FALLBACK_LIBRARY_PATH="\$EAPP_HOME/engine"
+# Video decoding (GStreamer): fixed plugin path and the index built at install time.
+export GST_PLUGIN_SYSTEM_PATH="\$EAPP_HOME/engine/GStreamer.framework/Versions/1.0/lib/gstreamer-1.0"
+export GST_REGISTRY="\$EAPP_HOME/gst-registry.bin"
 CXE="\$EAPP_HOME/engine/wswine.bundle"
 # eApp leaves background processes behind. Clearing them first prevents an
 # "AbandonedMutexException" error on the next start. Scoped to eApp's own

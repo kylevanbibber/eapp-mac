@@ -1,0 +1,129 @@
+--- a/dlls/wmp/wmp_private.h
++++ b/dlls/wmp/wmp_private.h
+@@ -109,6 +109,10 @@
+ 
+     /* Async event notification */
+     HWND msg_window;
++
++    /* Last states reported to the sink (eApp for Mac) */
++    WMPPlayState play_state;
++    WMPOpenState open_state;
+ };
+ 
+ BOOL init_player(WindowsMediaPlayer*);
+--- a/dlls/wmp/player.c
++++ b/dlls/wmp/player.c
+@@ -42,6 +42,10 @@
+     V_VT(params) = VT_UI4;
+     V_UI4(params) = state;
+ 
++    /* eapp-mac: remember the state for get_playState / get_openState */
++    if (type == DISPID_WMPCOREEVENT_PLAYSTATECHANGE) wmp->play_state = state;
++    else if (type == DISPID_WMPCOREEVENT_OPENSTATECHANGE) wmp->open_state = state;
++
+     call_sink(wmp->wmpocx, type, &dispparams);
+ }
+ 
+@@ -172,15 +176,19 @@
+ static HRESULT WINAPI WMPPlayer4_get_openState(IWMPPlayer4 *iface, WMPOpenState *pwmpos)
+ {
+     WindowsMediaPlayer *This = impl_from_IWMPPlayer4(iface);
+-    FIXME("(%p)->(%p)\n", This, pwmpos);
+-    return E_NOTIMPL;
++    TRACE("(%p)->(%p)\n", This, pwmpos);
++    if (!pwmpos) return E_POINTER;
++    *pwmpos = This->open_state;
++    return S_OK;
+ }
+ 
+ static HRESULT WINAPI WMPPlayer4_get_playState(IWMPPlayer4 *iface, WMPPlayState *pwmpps)
+ {
+     WindowsMediaPlayer *This = impl_from_IWMPPlayer4(iface);
+-    FIXME("(%p)->(%p)\n", This, pwmpps);
+-    return E_NOTIMPL;
++    TRACE("(%p)->(%p)\n", This, pwmpps);
++    if (!pwmpps) return E_POINTER;
++    *pwmpps = This->play_state;
++    return S_OK;
+ }
+ 
+ static HRESULT WINAPI WMPPlayer4_get_controls(IWMPPlayer4 *iface, IWMPControls **ppControl)
+@@ -1452,6 +1460,10 @@
+         IMediaSeeking_GetCapabilities(This->media_seeking, &capabilities);
+         *pIsAvailable = (capabilities & AM_SEEKING_CanSeekAbsolute) ?
+             VARIANT_TRUE : VARIANT_FALSE;
++    } else if (wcscmp(L"pause", bstrItem) == 0 || wcscmp(L"play", bstrItem) == 0
++            || wcscmp(L"stop", bstrItem) == 0) {
++        /* eapp-mac: WPF's MediaElement asks this before it will pause/seek/play */
++        *pIsAvailable = VARIANT_TRUE;
+     } else {
+         FIXME("%s not implemented\n", debugstr_w(bstrItem));
+         return E_NOTIMPL;
+@@ -1597,8 +1609,25 @@
+ static HRESULT WINAPI WMPControls_pause(IWMPControls *iface)
+ {
+     WindowsMediaPlayer *This = impl_from_IWMPControls(iface);
+-    FIXME("(%p)\n", This);
+-    return E_NOTIMPL;
++    HRESULT hres;
++
++    TRACE("(%p)\n", This);
++
++    /* eapp-mac: real pause on the DirectShow graph (was E_NOTIMPL) */
++    if (!This->filter_graph || !This->media_control)
++        return NS_S_WMPCORE_COMMAND_NOT_AVAILABLE;
++
++    update_state(This, DISPID_WMPCOREEVENT_PLAYSTATECHANGE, wmppsTransitioning);
++    hres = IMediaControl_Pause(This->media_control);
++    if (hres == S_FALSE)
++        hres = S_OK; /* S_FALSE: the graph is still completing the transition */
++
++    if (SUCCEEDED(hres))
++        update_state(This, DISPID_WMPCOREEVENT_PLAYSTATECHANGE, wmppsPaused);
++    else
++        update_state(This, DISPID_WMPCOREEVENT_PLAYSTATECHANGE, wmppsUndefined);
++
++    return hres;
+ }
+ 
+ static HRESULT WINAPI WMPControls_fastForward(IWMPControls *iface)
+@@ -1633,17 +1662,38 @@
+ 
+ static HRESULT WINAPI WMPControls_put_currentPosition(IWMPControls *iface, DOUBLE dCurrentPosition)
+ {
+-    LONGLONG Current;
++    LONGLONG Current, Previous;
+     HRESULT hres;
+     WindowsMediaPlayer *This = impl_from_IWMPControls(iface);
+     TRACE("(%p)->(%f)\n", This, dCurrentPosition);
+     if (!This->media_seeking)
+         return S_FALSE;
+ 
++    if (FAILED(IMediaSeeking_GetCurrentPosition(This->media_seeking, &Previous)))
++        Previous = 0;
++
+     Current = 10000000 * dCurrentPosition;
+     hres = IMediaSeeking_SetPositions(This->media_seeking, &Current,
+             AM_SEEKING_AbsolutePositioning, NULL, AM_SEEKING_NoPositioning);
+ 
++    if (SUCCEEDED(hres)) {
++        /* eapp-mac: PositionChange(oldPosition, newPosition). WPF's MediaElement waits for this
++         * after every seek it issues (including the seek to 0 it does while opening a file). */
++        DISPPARAMS dispparams;
++        VARIANTARG params[2];
++        LONGLONG Now = Current;
++        IMediaSeeking_GetCurrentPosition(This->media_seeking, &Now);
++        dispparams.cArgs = 2;
++        dispparams.cNamedArgs = 0;
++        dispparams.rgdispidNamedArgs = NULL;
++        dispparams.rgvarg = params;
++        V_VT(&params[1]) = VT_R8;
++        V_R8(&params[1]) = (DOUBLE)Previous / 10000000.0;
++        V_VT(&params[0]) = VT_R8;
++        V_R8(&params[0]) = (DOUBLE)Now / 10000000.0;
++        call_sink(This->wmpocx, DISPID_WMPCOREEVENT_POSITIONCHANGE, &dispparams);
++    }
++
+     return hres;
+ }
+ 

@@ -34,6 +34,12 @@ Microsoft .NET Framework 4.0 and 4.8 into it from Microsoft's own download serve
 .NET program can draw a window, then installs eApp from the MSI you downloaded from AIL. Nothing from AIL or
 Microsoft is redistributed here.
 
+Two parts of the engine are adjusted after it is unpacked. About one in ten eApp form pages is a
+Deflate-compressed TIFF the engine cannot read, so a small tool rewrites those pages pixel-identically
+(see `src/FormRepair.cs`). And the engine's Windows Media Player control cannot pause or report a finished
+seek, which left eApp's recruiting video stuck with no Continue button; a rebuilt copy of that control
+(`bin/wmp.dll`, Wine 9.0 plus the patch in `patches/`) replaces it.
+
 The subscription check is done by the Tally server on every start (your own subscription or your team's).
 Download links for the engine are issued by Tally only to active accounts and expire after 15 minutes.
 The sign-in token lives in your keychain; your password is never stored. If this Mac is offline, eApp keeps
@@ -48,4 +54,4 @@ opening until the allowance Tally issued last time runs out (7 days), then it ne
 
 ## License
 
-All rights reserved. The source is visible for review and support; it may not be copied, modified, or redistributed. Wine is LGPL 2.1 and is downloaded at install time from its publishers; nothing from AIL or Microsoft is redistributed here.
+All rights reserved for the installer and its scripts. The source is visible for review and support; it may not be copied, modified, or redistributed. Wine is LGPL 2.1 or later and is downloaded at install time from its publishers; the one Wine component shipped here, `bin/wmp.dll`, stays under the LGPL, with its source in `patches/`. Nothing from AIL or Microsoft is redistributed here.
