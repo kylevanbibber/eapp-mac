@@ -50,3 +50,35 @@ shasum -a 256 ../bin/wmp.dll   # put this value in WMP_SHA in both install.sh fi
 
 The installer copies the file over `engine/wswine.bundle/lib/wine/i386-windows/wmp.dll`
 and keeps the original as `wmp.dll.orig`.
+
+## shell32-autocomplete-reentry.py
+
+Why: eApp's text boxes use Windows auto-complete (append + suggest) with the values typed
+before. When a typed key matches a saved value, Wine's `display_matching_strs()`
+(dlls/shell32/autocomplete.c) appends the suggestion with `WM_SETTEXT`. eApp's masked text
+boxes (dates, phone numbers) set the text again while they handle that change. The second
+`WM_SETTEXT` reaches the auto-complete subclass, which frees the string list. Back in
+`display_matching_strs()`, `find_matching_enum_str()` reads the freed list and the whole
+program stops with a page fault at shell32+0x894c. Users saw eApp close while typing a date.
+
+What the patch does: the second `find_matching_enum_str()` call goes through a 22-byte stub
+placed in alignment padding. The stub checks that `ac->enum_strs` is still the list saved
+before the text was set. If not, it leaves the function with TRUE and shows no list.
+
+It is a binary patch of the engine's own `lib/wine/i386-windows/shell32.dll` (26 bytes), so
+no modified Wine file is shipped. The installer applies the same bytes in place, only when
+the file's SHA-256 is the expected one, and keeps the original as `shell32.dll.orig`.
+The script documents the change and reproduces the patched file.
+
+Verified with a WinForms test (text box with SuggestAppend and a TextChanged handler that
+sets Text): page fault before, clean after, suggestions still shown. Verified in eApp on
+the Diabetic Questionnaire date field.
+
+## Default font (no patch, a registry setting)
+
+eApp's form windows use the old WinForms `AutoScaleBaseSize` (5, 13) and scale their
+contents by the default font's height. Wine maps `MS Shell Dlg` to Tahoma (height 14);
+Windows uses Microsoft Sans Serif (height 13). A form that eApp opens without a parent
+window was stretched by about 16% vertically, so fields sat below their boxes. The
+installer sets `FontSubstitutes` `MS Shell Dlg` and `MS Shell Dlg 2` to
+`Microsoft Sans Serif` (the font file is part of macOS).

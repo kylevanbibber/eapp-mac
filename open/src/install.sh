@@ -40,7 +40,7 @@ ENGINE_URL="https://github.com/Sikarugir-App/Engines/releases/download/v1.0/WS12
 TEMPLATE_URL="https://github.com/Sikarugir-App/Template/releases/download/v1.0/Template-1.0.12.tar.xz"
 DOTNET40_URL="http://download.microsoft.com/download/9/5/A/95A9616B-7A37-4AF6-BC36-D6EA96C8DAAE/dotNetFx40_Full_x86_x64.exe"
 DOTNET48_URL="https://download.visualstudio.microsoft.com/download/pr/7afca223-55d2-470a-8edc-6a1739ae3252/abd170b4b0ec15ad0222a809b761a036/ndp48-x86-x64-allos-enu.exe"
-WMP_URL="https://github.com/kylevanbibber/eapp-mac/releases/download/v1.4-open/wmp.dll"
+WMP_URL="https://github.com/kylevanbibber/eapp-mac/releases/download/v1.5-open/wmp.dll"
 
 B="\033[1m"; G="\033[32m"; Y="\033[33m"; R="\033[31m"; N="\033[0m"
 mkdir -p "$CACHE" "$(dirname "$LOG")" "$EAPP_HOME"
@@ -168,6 +168,26 @@ else
   cp -f "$CACHE/wmp.dll" "$WMP_DIR/wmp.dll" && chmod 644 "$WMP_DIR/wmp.dll" || die "Could not install the media player fix."
   ok "Media player fixed"
 fi
+# Typing in a field that has a saved suggestion could close eApp (seen first on date fields).
+# The engine's text-suggestion code frees its list while eApp reformats the field, then reads it
+# again. 26 bytes of the engine's shell32.dll are changed in place so that code stops when the
+# list has changed (see patches/shell32-autocomplete-reentry.py). The original is kept beside it
+# as shell32.dll.orig. Only the exact engine build this was written for is touched.
+S32="$CXE/lib/wine/i386-windows/shell32.dll"
+S32_OLD="4e9465e555e41849ad112ffcbb6293b1424138cd4cf02ca7800a66d65174b548"
+S32_NEW="025a29b60988b232101e2256bda89c9d51098bd356dda9449bd330e1d6ba649b"
+s32_sha() { shasum -a 256 "$1" 2>/dev/null | cut -c1-64; }
+case "$(s32_sha "$S32")" in
+  "$S32_NEW") ok "Field typing fix already in place" ;;
+  "$S32_OLD")
+    stop_engine
+    cp -p "$S32" "$S32.orig" && cp -p "$S32" "$S32.new" || die "Could not prepare the field typing fix."
+    printf '\x8d\x0c\xba\x39\xce\x8d\x4f\x01\x0f\x84\x78\xde\xff\xff\x83\xc8\xff\xe9\x9d\xed\xff\xff' | dd of="$S32.new" bs=1 seek=43658 conv=notrunc 2>/dev/null
+    printf '\xda\x09\x00\x00' | dd of="$S32.new" bs=1 seek=41132 conv=notrunc 2>/dev/null
+    if [ "$(s32_sha "$S32.new")" = "$S32_NEW" ]; then mv -f "$S32.new" "$S32" && chmod 644 "$S32" && ok "Field typing fix installed"
+    else rm -f "$S32.new"; warn "The field typing fix could not be applied. eApp still works; tell your administrator."; fi ;;
+  *) warn "The field typing fix does not match this engine. eApp still works; tell your administrator." ;;
+esac
 # Video decoding uses GStreamer. Its plugin index is built once here (about 10 s) and reused by
 # the eApp icon. Without it the engine rebuilds the index every time a video opens (about 100 s).
 GST="$ENGINE_DIR/GStreamer.framework/Versions/1.0"
@@ -192,6 +212,14 @@ echo "$V" | grep -q "Windows" || die "The engine does not run on this Mac. Send 
 V32=$("$WINE" "$C/windows/syswow64/cmd.exe" /c ver 2>/dev/null | tr -d '\r' | grep -ci microsoft)
 [ "$V32" -ge 1 ] || die "32-bit Windows support is not working. Send the log file to your administrator."
 ok "Environment runs 64-bit and 32-bit Windows code"
+# eApp sizes each form from the default Windows font. The engine's default (Tahoma) is one pixel
+# taller than the Windows one, so eApp stretched forms it opened itself: fields sat too low, some
+# on black, and a checklist box was hidden. Use Microsoft Sans Serif, as Windows does.
+FS_KEY='HKLM\Software\Microsoft\Windows NT\CurrentVersion\FontSubstitutes'
+"$WINE" reg add "$FS_KEY" /v "MS Shell Dlg" /d "Microsoft Sans Serif" /f >>"$LOG" 2>&1
+"$WINE" reg add "$FS_KEY" /v "MS Shell Dlg 2" /d "Microsoft Sans Serif" /f >>"$LOG" 2>&1
+if "$WINE" reg query "$FS_KEY" /v "MS Shell Dlg" 2>/dev/null | grep -q "Microsoft Sans Serif"; then ok "Form layout font set"
+else warn "The form layout font was not set. Fields on some forms can sit too low."; fi
 stop_engine
 
 # ----------------------------------------------------------------- 4. .NET
