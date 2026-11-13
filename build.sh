@@ -14,6 +14,10 @@ cp "$SRC/install.sh" "$APP/Contents/Resources/install.sh"; chmod 755 "$APP/Conte
 cp "$SRC/READ ME FIRST.txt" "$APP/Contents/Resources/"
 [ -f bin/wmp.dll ] || { echo "bin/wmp.dll is missing (see patches/README.md)"; exit 1; }
 cp bin/wmp.dll "$APP/Contents/Resources/wmp.dll"
+for f in bin/AtlasEappAddin.dll bin/0Harmony.dll fonts/atlas-toolbar-icons.ttf src/form-fix.sh; do
+  [ -f "$f" ] || { echo "$f is missing"; exit 1; }
+  cp "$f" "$APP/Contents/Resources/$(basename "$f")"
+done
 PL="$APP/Contents/Info.plist"
 pb(){ /usr/libexec/PlistBuddy -c "$1" "$PL" >/dev/null 2>&1 || true; }
 pb "Add :CFBundleIdentifier string $BUNDLE_ID"; pb "Set :CFBundleIdentifier $BUNDLE_ID"

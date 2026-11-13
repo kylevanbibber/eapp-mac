@@ -38,8 +38,9 @@ APPDIR="${EAPP_APPDIR:-/Applications/eApp.app}"
 
 # Download locations are issued by the Tally server after sign-in (short-lived links).
 ENGINE_URL=""; TEMPLATE_URL=""; DOTNET40_URL=""; DOTNET48_URL=""
-WMP_URL="https://github.com/kylevanbibber/eapp-mac/releases/download/v1.6/wmp.dll"
-GATE_VERSION="1.6"
+WMP_URL="https://github.com/kylevanbibber/eapp-mac/releases/download/v1.7/wmp.dll"
+FIX_URL="https://github.com/kylevanbibber/eapp-mac/releases/download/v1.7"
+GATE_VERSION="1.7"
 
 B="\033[1m"; G="\033[32m"; Y="\033[33m"; R="\033[31m"; N="\033[0m"
 mkdir -p "$CACHE" "$(dirname "$LOG")" "$EAPP_HOME"
@@ -92,7 +93,7 @@ cat > "$EAPP_HOME/tally-gate.sh" <<'GATE_EOF'
 TALLY_API="${TALLY_API:-https://api.callwithtally.com}"
 GATE_SERVICE="eApp Mac (Tally)"
 GATE_STATE="${GATE_STATE:-$EAPP_HOME/tally-gate.state}"   # non-secret: email|expires_epoch|via
-GATE_VERSION="${GATE_VERSION:-1.6}"
+GATE_VERSION="${GATE_VERSION:-1.7}"
 
 gate_dialog_text()   { osascript -e 'on run argv' -e 'tell application "System Events"' -e 'activate' -e 'set r to display dialog (item 1 of argv) default answer (item 2 of argv) with title "eApp for Mac" buttons {"Cancel", "OK"} default button "OK"' -e 'return text returned of r' -e 'end tell' -e 'end run' "$1" "$2" 2>/dev/null; }
 gate_dialog_secret() { osascript -e 'on run argv' -e 'tell application "System Events"' -e 'activate' -e 'set r to display dialog (item 1 of argv) default answer "" with hidden answer with title "eApp for Mac" buttons {"Cancel", "OK"} default button "OK"' -e 'return text returned of r' -e 'end tell' -e 'end run' "$1" 2>/dev/null; }
@@ -591,6 +592,30 @@ else
 fi
 stop_engine
 
+# ------------------------------------------------------------- Form fix
+step "Installing the form page fix"
+# On this engine a form page that was scrolled keeps its fields a few units too high: on screen,
+# and in the pages that go to DocuSign and to the home office. A small add-in that runs inside eApp
+# puts the fields back (source: github.com/kylevanbibber/eapp-api, addin/). form-fix.sh copies it
+# into eApp's .NET assembly cache and names it in EappMain.exe.config. The eApp icon runs the same
+# check on every start, because eApp's own update can replace that file.
+FIX_RES="$(cd "$(dirname "$0")" && pwd)"
+fix_sha() { shasum -a 256 "$1" 2>/dev/null | cut -d' ' -f1; }
+mkdir -p "$EAPP_HOME/addin"
+FIX_OK=1
+for pair in "AtlasEappAddin.dll:f339c2c01860bcb6013037cc3af85e8db420e3cf793e803bff585ba061051946" "0Harmony.dll:25127555b69333b39a4ef279bc3f1e3c21b07e5b71775a8fe67aed51111d56a1" "atlas-toolbar-icons.ttf:1046289c8e46374ab4fa29d806e92fd99884ede72791a88c181b6d703c5c51fa"; do
+  f="${pair%%:*}"; want="${pair##*:}"
+  if [ "$(fix_sha "$EAPP_HOME/addin/$f")" != "$want" ]; then
+    if [ "$(fix_sha "$FIX_RES/$f")" = "$want" ]; then cp -f "$FIX_RES/$f" "$EAPP_HOME/addin/$f"
+    else fetch "$FIX_URL/$f" "$EAPP_HOME/addin/$f" "the form page fix ($f)"; fi
+  fi
+  [ "$(fix_sha "$EAPP_HOME/addin/$f")" = "$want" ] || { rm -f "$EAPP_HOME/addin/$f"; FIX_OK=0; }
+done
+if [ -s "$FIX_RES/form-fix.sh" ]; then cp -f "$FIX_RES/form-fix.sh" "$EAPP_HOME/form-fix.sh"
+else fetch "$FIX_URL/form-fix.sh" "$EAPP_HOME/form-fix.sh" "the form page fix (script)"; fi
+if [ "$FIX_OK" = 1 ] && [ -s "$EAPP_HOME/form-fix.sh" ] && . "$EAPP_HOME/form-fix.sh" && apply_form_fix; then ok "Form page fix installed"
+else warn "The form page fix was not installed. Fields on a scrolled page can print too high. Run this installer again."; fi
+
 # -------------------------------------------------------------- Launcher
 step "Creating the eApp icon"
 rm -rf "$APPDIR" 2>/dev/null
@@ -634,8 +659,11 @@ repair_pages() {
     && "\$CXE/bin/wine" 'C:\\eapp-mac\\repair\\FormRepair.exe' 'C:\\Program Files (x86)\\AIL\\eApp\\forms' >> "\$HOME/Library/Logs/eApp-Mac-Repair.log" 2>&1
 }
 repair_pages
+# Keep the form page fix wired into eApp (see form-fix.sh). eApp's update can undo it.
+if [ -f "\$EAPP_HOME/form-fix.sh" ]; then . "\$EAPP_HOME/form-fix.sh"; else apply_form_fix() { :; }; fi
+apply_form_fix
 # eApp's self-update replaces form pages after sign-in. Keep checking for the first 40 minutes.
-( for i in \$(seq 1 40); do sleep 60; repair_pages; done ) >/dev/null 2>&1 &
+( for i in \$(seq 1 40); do sleep 60; repair_pages; apply_form_fix; done ) >/dev/null 2>&1 &
 exec "\$CXE/bin/wine" 'C:\\Program Files (x86)\\AIL\\eApp\\eAPP.exe'
 LAUNCH
 chmod +x "$APPDIR/Contents/MacOS/eApp"
