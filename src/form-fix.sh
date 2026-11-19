@@ -9,7 +9,7 @@
 # start. If the add-in files are not in place, the config is put back to plain, so eApp always starts.
 #
 # Needs: EAPP_HOME.
-FORM_FIX_VER="0.1.43"
+FORM_FIX_VER="0.1.44"
 FORM_FIX_TOKEN="6ff452385eecd907"
 
 # apply_form_fix -> 0 the add-in is wired in, 1 it is not (eApp still starts, without the fix)

@@ -48,9 +48,26 @@ opening until the allowance Tally issued last time runs out (7 days), then it ne
 ## Building this installer
 
 ```
-./build.sh 1.0      # signs with Developer ID
+./build.sh          # signs with Developer ID
 ./notarize.sh       # notarizes + staples app and DMG (needs a notarytool keychain profile)
+SRC=open/src DIST=open/dist APPNAME="Install eApp (open)" BUNDLE_ID=com.callwithtally.eapp-mac-installer-open ./build.sh
 ```
+
+## Versions
+
+The version is set in one place: `EAPP_MAC_VERSION` near the top of `src/install.sh` (and of
+`open/src/install.sh` for the open build). `build.sh` reads it. Publish each build under the tag that
+`build.sh` prints: `v<version>` for the Tally build, `v<version>-open` for the open build. The installer
+downloads its extra files (wmp.dll, the form page fix) from that tag.
+
+Where a user sees the version:
+- the installer window, at the start ("Version 1.8", and the version already on the Mac) and at FINISHED;
+- Finder > Applications > eApp > Get Info;
+- a notice when eApp opens (at most once a day) when GitHub has a newer release of the same build, with a
+  Download button that opens the release page.
+
+The Tally server also records the version of each Mac at every start (table `eapp_mac_devices`).
+Installs older than 1.8 have no notice; those users must run the new installer once.
 
 ## License
 

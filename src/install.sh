@@ -38,9 +38,16 @@ APPDIR="${EAPP_APPDIR:-/Applications/eApp.app}"
 
 # Download locations are issued by the Tally server after sign-in (short-lived links).
 ENGINE_URL=""; TEMPLATE_URL=""; DOTNET40_URL=""; DOTNET48_URL=""
-WMP_URL="https://github.com/kylevanbibber/eapp-mac/releases/download/v1.7/wmp.dll"
-FIX_URL="https://github.com/kylevanbibber/eapp-mac/releases/download/v1.7"
-GATE_VERSION="1.7"
+# Version of this installer: the one place to change it. build.sh reads it; the installed eApp
+# shows it (Finder > Get Info on eApp) and keeps it in $EAPP_HOME/version.
+EAPP_MAC_VERSION="1.8"
+EAPP_MAC_TAG="v$EAPP_MAC_VERSION"   # GitHub release tag for this version
+# What the Mac had before this run (empty on a new Mac). Read before anything is rewritten.
+PREV_VERSION=$(head -1 "$EAPP_HOME/version" 2>/dev/null)
+[ -n "$PREV_VERSION" ] || PREV_VERSION=$(sed -nE 's/^GATE_VERSION="\$\{GATE_VERSION:-([0-9.]+)\}"$/\1/p' "$EAPP_HOME/tally-gate.sh" 2>/dev/null)
+WMP_URL="https://github.com/kylevanbibber/eapp-mac/releases/download/$EAPP_MAC_TAG/wmp.dll"
+FIX_URL="https://github.com/kylevanbibber/eapp-mac/releases/download/$EAPP_MAC_TAG"
+GATE_VERSION="$EAPP_MAC_VERSION"
 
 B="\033[1m"; G="\033[32m"; Y="\033[33m"; R="\033[31m"; N="\033[0m"
 mkdir -p "$CACHE" "$(dirname "$LOG")" "$EAPP_HOME"
@@ -93,7 +100,7 @@ cat > "$EAPP_HOME/tally-gate.sh" <<'GATE_EOF'
 TALLY_API="${TALLY_API:-https://api.callwithtally.com}"
 GATE_SERVICE="eApp Mac (Tally)"
 GATE_STATE="${GATE_STATE:-$EAPP_HOME/tally-gate.state}"   # non-secret: email|expires_epoch|via
-GATE_VERSION="${GATE_VERSION:-1.7}"
+GATE_VERSION="${GATE_VERSION:-$(head -1 "$EAPP_HOME/version" 2>/dev/null)}"
 
 gate_dialog_text()   { osascript -e 'on run argv' -e 'tell application "System Events"' -e 'activate' -e 'set r to display dialog (item 1 of argv) default answer (item 2 of argv) with title "eApp for Mac" buttons {"Cancel", "OK"} default button "OK"' -e 'return text returned of r' -e 'end tell' -e 'end run' "$1" "$2" 2>/dev/null; }
 gate_dialog_secret() { osascript -e 'on run argv' -e 'tell application "System Events"' -e 'activate' -e 'set r to display dialog (item 1 of argv) default answer "" with hidden answer with title "eApp for Mac" buttons {"Cancel", "OK"} default button "OK"' -e 'return text returned of r' -e 'end tell' -e 'end run' "$1" 2>/dev/null; }
@@ -227,6 +234,10 @@ waiting. You can leave it running.
 Do not close this window until it says FINISHED.
 --------------------------------------------------
 BANNER
+say "  Version $EAPP_MAC_VERSION"
+if [ -n "$PREV_VERSION" ]; then say "  This Mac has version $PREV_VERSION."
+elif [ -d "$APPDIR" ]; then say "  This Mac has an older version."; fi
+echo "installer version $EAPP_MAC_VERSION, this Mac had ${PREV_VERSION:-none}" >> "$LOG"
 
 # ------------------------------------------------------------------ 1. Mac
 step "Step 1 of 9  Checking this Mac"
@@ -616,18 +627,54 @@ else fetch "$FIX_URL/form-fix.sh" "$EAPP_HOME/form-fix.sh" "the form page fix (s
 if [ "$FIX_OK" = 1 ] && [ -s "$EAPP_HOME/form-fix.sh" ] && . "$EAPP_HOME/form-fix.sh" && apply_form_fix; then ok "Form page fix installed"
 else warn "The form page fix was not installed. Fields on a scrolled page can print too high. Run this installer again."; fi
 
+# ------------------------------------------------------------- Version
+# The version on this Mac: $EAPP_HOME/version (one line), the eApp icon's Get Info, and the Tally
+# server (the subscription check sends it). update-check.sh tells the user, once a day, when a
+# newer installer is on GitHub.
+cat > "$EAPP_HOME/update-check.sh" <<UPD_EOF
+# Newer-version notice for eApp for Mac. Sourced by the eApp launcher, run in the background.
+UPD_TAG_RE='v[0-9][0-9.]*'
+UPD_EOF
+cat >> "$EAPP_HOME/update-check.sh" <<'UPD_EOF'
+UPD_REPO="kylevanbibber/eapp-mac"
+# upd_newer A B -> 0 when version A is newer than version B (1.10 is newer than 1.9)
+upd_newer() { awk -v a="$1" -v b="$2" 'BEGIN{n=split(a,x,".");m=split(b,y,".");k=n>m?n:m;for(i=1;i<=k;i++){if(x[i]+0>y[i]+0)exit 0;if(x[i]+0<y[i]+0)exit 1}exit 1}'; }
+update_check() {
+  local have tag want r stamp="$EAPP_HOME/update-check.stamp"
+  have=$(head -1 "$EAPP_HOME/version" 2>/dev/null); [ -n "$have" ] || return 0
+  if [ -f "$stamp" ] && [ $(( $(date +%s) - $(stat -f %m "$stamp") )) -lt 86400 ]; then return 0; fi
+  touch "$stamp"
+  # Newest release of this kind first (GitHub lists releases newest first).
+  tag=$(curl -fsS --max-time 10 "https://api.github.com/repos/$UPD_REPO/releases?per_page=20" 2>/dev/null \
+        | grep -oE "\"tag_name\": *\"$UPD_TAG_RE\"" | head -1 | sed -E 's/.*"(v[^"]*)"$/\1/')
+  [ -n "$tag" ] || return 0
+  want=$(printf '%s' "$tag" | sed -E 's/^v//; s/-open$//')
+  upd_newer "$want" "$have" || return 0
+  r=$(osascript -e 'on run argv' -e 'tell application "System Events"' -e 'activate' \
+        -e 'set r to display dialog (item 1 of argv) with title "eApp for Mac" buttons {"Later", "Download"} default button "Download"' \
+        -e 'return button returned of r' -e 'end tell' -e 'end run' \
+        "eApp for Mac $want is out. This Mac has version $have.
+
+Download it, close eApp, then open the new installer. Your sales and settings stay." 2>/dev/null)
+  [ "$r" = "Download" ] && open "https://github.com/$UPD_REPO/releases/tag/$tag"
+  return 0
+}
+UPD_EOF
+
 # -------------------------------------------------------------- Launcher
 step "Creating the eApp icon"
 rm -rf "$APPDIR" 2>/dev/null
 mkdir -p "$APPDIR/Contents/MacOS"
-cat > "$APPDIR/Contents/Info.plist" <<'PLIST'
+cat > "$APPDIR/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>CFBundleName</key><string>eApp</string>
   <key>CFBundleDisplayName</key><string>eApp</string>
   <key>CFBundleIdentifier</key><string>com.ail.eapp.mac</string>
-  <key>CFBundleVersion</key><string>2.0</string>
+  <key>CFBundleShortVersionString</key><string>$EAPP_MAC_VERSION</string>
+  <key>CFBundleVersion</key><string>$EAPP_MAC_VERSION</string>
+  <key>CFBundleGetInfoString</key><string>eApp for Mac $EAPP_MAC_VERSION</string>
   <key>CFBundleExecutable</key><string>eApp</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
@@ -664,15 +711,20 @@ if [ -f "\$EAPP_HOME/form-fix.sh" ]; then . "\$EAPP_HOME/form-fix.sh"; else appl
 apply_form_fix
 # eApp's self-update replaces form pages after sign-in. Keep checking for the first 40 minutes.
 ( for i in \$(seq 1 40); do sleep 60; repair_pages; apply_form_fix; done ) >/dev/null 2>&1 &
+# Tell the user when a newer eApp for Mac is out (once a day, in the background).
+[ -f "\$EAPP_HOME/update-check.sh" ] && ( . "\$EAPP_HOME/update-check.sh"; update_check ) >/dev/null 2>&1 &
 exec "\$CXE/bin/wine" 'C:\\Program Files (x86)\\AIL\\eApp\\eAPP.exe'
 LAUNCH
 chmod +x "$APPDIR/Contents/MacOS/eApp"
 ok "eApp is now in your Applications folder"
+printf '%s\n' "$EAPP_MAC_VERSION" > "$EAPP_HOME/version"
+rm -f "$EAPP_HOME/update-check.stamp"
+ok "Version $EAPP_MAC_VERSION"
 
-cat <<'DONE'
+cat <<DONE
 
 --------------------------------------------------
-  FINISHED
+  FINISHED  (eApp for Mac $EAPP_MAC_VERSION)
 --------------------------------------------------
 Open eApp from your Applications folder, or from
 Launchpad, the same as any other Mac app.

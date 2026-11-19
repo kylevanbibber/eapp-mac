@@ -1,10 +1,15 @@
 #!/bin/bash
 # Build "Install eApp.app" + Install-eApp.dmg from src/. Signed, not yet notarized.
-# Usage: ./build.sh [version]       Then: ./notarize.sh
+# Usage: ./build.sh       Then: ./notarize.sh
+# The version comes from EAPP_MAC_VERSION in $SRC/install.sh (the one place to change it).
+# An argument, if given, must match it.
 set -euo pipefail
 cd "$(dirname "$0")"
-VER="${1:-1.0}"
 SRC="${SRC:-src}"; DIST="${DIST:-dist}"; APPNAME="${APPNAME:-Install eApp}"; BUNDLE_ID="${BUNDLE_ID:-com.callwithtally.eapp-mac-installer}"
+VER=$(sed -nE 's/^EAPP_MAC_VERSION="([0-9.]+)"$/\1/p' "$SRC/install.sh")
+[ -n "$VER" ] || { echo "EAPP_MAC_VERSION is missing in $SRC/install.sh"; exit 1; }
+if [ -n "${1:-}" ] && [ "$1" != "$VER" ]; then echo "asked for $1 but $SRC/install.sh says $VER"; exit 1; fi
+TAG=$(sed -nE 's/^EAPP_MAC_TAG="([^"]+)".*/\1/p' "$SRC/install.sh" | sed "s/\$EAPP_MAC_VERSION/$VER/")
 ID="Developer ID Application: Kyle VanBibber (B8MFVFT62V)"
 APP="$DIST/$APPNAME.app"
 rm -rf "$DIST"; mkdir -p "$DIST"
@@ -35,3 +40,4 @@ hdiutil create -quiet -volname "$APPNAME" -srcfolder "$STAGE" -ov -format UDZO "
 codesign --force --timestamp --sign "$ID" "$DIST/Install-eApp.dmg"
 rm -rf "$STAGE"
 echo "built: $APP  (v$VER)  and $DIST/Install-eApp.dmg  (not notarized yet)"
+echo "release tag: $TAG  (the installer downloads its extra files from this tag)"
